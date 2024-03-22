@@ -1,5 +1,4 @@
 from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.models import User
 from rest_framework import serializers, status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
@@ -7,8 +6,10 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 # from utils.custom_permissions import CustomPermission
 from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN
+
 # from utils.logger import logger
 
+User = get_user_model()
 User._meta.get_field("username")._unique = True
 
 
@@ -36,7 +37,7 @@ def login(request):
         )
     token, _ = Token.objects.get_or_create(user=user)
     return Response(
-        {"token": token.key, "username": user.username, "admin": user.is_staff},
+        {"id": user.id, "token": token.key, "username": user.username, "role": user.role},
         status=status.HTTP_200_OK,
     )
 
@@ -44,43 +45,34 @@ def login(request):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = get_user_model()
-        fields = ("username", "password")
+        fields = ("username", "password", "role")
+        extra_kwargs = {
+            "username": {
+                "error_messages": {"required": "Please enter a username."}
+            },
+            "password": {
+                "error_messages": {"required": "Please enter a password."}
+            },
+        }
+
 
 @api_view(["POST"])
-@permission_classes((AllowAny,))
+# @permission_classes((AllowAny,))
 def register(request):
-    VALID_USER_FIELDS = [f.name for f in get_user_model()._meta.fields]
-    DEFAULTS = {
-        # you can define any defaults that you would like for the user, here
-    }
-    if User.objects.filter(username=request.data["username"]).exists():
-        return Response(
-            {
-                "detail": "Username already exists",
-                "error": "username",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    user_data = request.data.copy()
+    user_serializer = UserSerializer(data=user_data)
 
-    serialized = UserSerializer(data=request.data)
-    if serialized.is_valid():
-        user_data = {
-            field: data
-            for (field, data) in request.data.items()
-            if field in VALID_USER_FIELDS
-        }
-        user_data.update(DEFAULTS)
+    if user_serializer.is_valid():
+        if get_user_model().objects.filter(username=user_data["username"]).exists():
+            return Response(
+                {"detail": "Username already exists", "error": "username"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user = get_user_model().objects.create_user(**user_data)
-
+        user = user_serializer.save()
         token, _ = Token.objects.get_or_create(user=user)
-        return Response(
-            {
-                "token": token.key,
-                "username": UserSerializer(instance=user).data["username"],
-                "admin": user.is_staff,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return Response({"id": user.id, "token": token.key, "username": user.username, "role": user.role},
+                        status=status.HTTP_201_CREATED,
+                        )
     else:
-        return Response(serialized._errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)

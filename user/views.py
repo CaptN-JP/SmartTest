@@ -1,86 +1,145 @@
-from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.models import User
-from rest_framework import serializers, status
-from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
-# from utils.custom_permissions import CustomPermission
-from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN
-# from utils.logger import logger
-
-User._meta.get_field("username")._unique = True
-
-
-@api_view(["POST"])
-# @permission_classes((AllowAny, CustomPermission,))
-def login(request):
-    username = request.data.get("username")
-    password = request.data.get("password")
-    if username is None or password is None:
-        return Response(
-            {
-                "detail": "Please provide both username and password",
-                "error": "Blank field",
-            },
-            status=HTTP_400_BAD_REQUEST,
-        )
-    user = authenticate(username=username, password=password)
-    if not user:
-        return Response(
-            {
-                "detail": "Invalid Credentials",
-                "error": "Invalid Credentials",
-            },
-            status=HTTP_403_FORBIDDEN,
-        )
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response(
-        {"token": token.key, "username": user.username, "admin": user.is_staff},
-        status=status.HTTP_200_OK,
-    )
+from rest_framework import generics
+from user.models import (
+    Course,
+    Quiz,
+    User,
+    Question,
+)
+from user.serializers import (
+    CourseSerializer,
+    QuizSerializer,
+    QuestionSerializer,
+    UserAttemptSerializer
+)
+from user import db_queries
+from rest_framework.exceptions import PermissionDenied, NotFound
+from rest_framework.pagination import PageNumberPagination
 
 
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = get_user_model()
-        fields = ("username", "password")
+class StandardResultsSetPagination(PageNumberPagination):
+    """
+    Pagination
+    """
 
-@api_view(["POST"])
-@permission_classes((AllowAny,))
-def register(request):
-    VALID_USER_FIELDS = [f.name for f in get_user_model()._meta.fields]
-    DEFAULTS = {
-        # you can define any defaults that you would like for the user, here
-    }
-    if User.objects.filter(username=request.data["username"]).exists():
-        return Response(
-            {
-                "detail": "Username already exists",
-                "error": "username",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 1000
 
-    serialized = UserSerializer(data=request.data)
-    if serialized.is_valid():
-        user_data = {
-            field: data
-            for (field, data) in request.data.items()
-            if field in VALID_USER_FIELDS
-        }
-        user_data.update(DEFAULTS)
 
-        user = get_user_model().objects.create_user(**user_data)
+class ListCreateCourse(generics.ListCreateAPIView):
+    """Create and list courses"""
+    queryset = Course.objects.all()
+    serializer_class = CourseSerializer
+    pagination_class = StandardResultsSetPagination
 
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response(
-            {
-                "token": token.key,
-                "username": UserSerializer(instance=user).data["username"],
-                "admin": user.is_staff,
-            },
-            status=status.HTTP_201_CREATED,
-        )
-    else:
-        return Response(serialized._errors, status=status.HTTP_400_BAD_REQUEST)
+    def perform_create(self, serializer):
+        if self.request.user.role == User.ADMIN:
+            user = User.objects.filter(id=self.request.data["creator"]).first()
+            if user:
+                serializer.save(creator=user)
+            else:
+                NotFound()
+        else:
+            raise PermissionDenied()
+
+
+class RetrieveUpdateDestroyCourse(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve, update and delete courses."""
+    queryset = Course.objects.all()
+    serializer_class = CourseSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def perform_update(self, serializer):
+        if self.request.user.role == User.ADMIN:
+            serializer.save(creator=self.request.user)
+        else:
+            raise PermissionDenied()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role == User.ADMIN:
+            instance.delete()
+        else:
+            raise PermissionDenied()
+
+
+class ListCreateQuiz(generics.ListCreateAPIView):
+    """Create and list quizzes"""
+    queryset = Quiz.objects.all()
+    serializer_class = QuizSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def perform_create(self, serializer):
+        if self.request.user.role == User.INSTRUCTOR:
+            serializer.save()
+        else:
+            raise PermissionDenied()
+
+
+class RetrieveUpdateDestroyQuiz(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve, update and delete quizzes."""
+    queryset = Quiz.objects.all()
+    serializer_class = QuizSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def perform_update(self, serializer):
+        if self.request.user.role == User.INSTRUCTOR:
+            serializer.save()
+        else:
+            raise PermissionDenied()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role == User.INSTRUCTOR:
+            instance.delete()
+        else:
+            raise PermissionDenied()
+
+
+class ListCreateQuestion(generics.ListCreateAPIView):
+    """Create and list questions."""
+    queryset = Question.objects.all()
+    serializer_class = QuestionSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def perform_create(self, serializer):
+        if self.request.user.role == User.INSTRUCTOR:
+            serializer.save()
+        else:
+            raise PermissionDenied()
+
+
+class RetrieveUpdateDestroyQuestion(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve, update and delete questions."""
+    queryset = Question.objects.all()
+    serializer_class = QuestionSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def perform_update(self, serializer):
+        if self.request.user.role == User.INSTRUCTOR:
+            serializer.save()
+        else:
+            raise PermissionDenied()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role == User.INSTRUCTOR:
+            instance.delete()
+        else:
+            raise PermissionDenied()
+
+
+class ListCreateUserAttempt(generics.ListCreateAPIView):
+    """Create and list user attempts."""
+    serializer_class = UserAttemptSerializer
+    # pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        user = self.request.user
+        quiz = self.request.query_params.get("quiz", None)
+        return db_queries.get_user_attempts(user, quiz)
+
+    def perform_create(self, serializer):
+        if self.request.user.role == User.GENERIC:
+            question = Question.objects.filter(id=self.request.data["question"]).first()
+            is_right = True if question.answer == self.request.data["selected_option"] else False
+            serializer.save(user=self.request.user, is_right=is_right)
+        else:
+            raise PermissionDenied()
